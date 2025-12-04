@@ -2,22 +2,21 @@ from counterfit_connection import CounterFitConnection
 import time
 from counterfit_shims_grove.adc import ADC
 from counterfit_shims_grove.grove_relay import GroveRelay
-import paho.mqtt.client as mqtt
 import json
+from azure.iot.device import IoTHubDeviceClient, Message, MethodResponse
+
+connection_string = "HostName=soil-moisture-sensor-max11189.azure-devices.net;DeviceId=soil-moisture-sensor;SharedAccessKey=+6A1CAZkhiAl3cxC90KNZWPoAy2znZN1z0SOqJ+0dbw="
+
+device_client = IoTHubDeviceClient.create_from_connection_string(connection_string)
+print('Connecting')
+device_client.connect()
+print('Connected')
+
 
 CounterFitConnection.init('127.0.0.1', 5001)
 adc = ADC()
 relay = GroveRelay(66)
 
-id = '9e9e2074-64b1-4dd2-8ee3-ad2ab0359a77'
-client_name = id + 'soil_moisture_sensor_client'
-client_telemetry_topic = id + '/telemetry'
-server_command_topic = id + '/command'
-
-mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_name)
-mqtt_client.connect('test.mosquitto.org')
-mqtt_client.loop_start()
-print("MQTT connected!")
 
 def handle_command(client, userdata, message):
     payload = json.loads(message.payload.decode())
@@ -30,13 +29,25 @@ def handle_command(client, userdata, message):
         print("Turning relay OFF")
         relay.off()
 
-mqtt_client.subscribe(server_command_topic)
-mqtt_client.on_message = handle_command
+def handle_method_request(request):
+    print("Direct method received - ", request.name)
+    if request.name == "relay_on":
+        print("-> Turning relay ON")
+        relay.on()
+    elif request.name == "relay_off":
+        print("-> Turning relay OFF")
+        relay.off()
+
+    method_response = MethodResponse.create_from_method_request(request, 200)
+    device_client.send_method_response(method_response)
+
+device_client.on_method_request_received = handle_method_request 
 
 while True:
     soil_moisture = adc.read(65)
     print("Soil moisture:", soil_moisture)
     telemetry = json.dumps({'soil_moisture': soil_moisture})
     print("Sending telemetry:", telemetry)
-    mqtt_client.publish(client_telemetry_topic, telemetry)
+    message = Message(json.dumps({ 'soil_moisture': soil_moisture }))
+    device_client.send_message(message)
     time.sleep(10)
